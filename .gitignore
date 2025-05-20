@@ -1,0 +1,10 @@
+__pycache__/
+env/
+venv/
+/.vscode
+*.txt
+*.egg-info
+wandb/
+lm_cache/
+run.sh
+testset/
