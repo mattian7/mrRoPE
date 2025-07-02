@@ -81,6 +81,9 @@ class LlamaYaRNScaledRotaryEmbedding(torch.nn.Module):
         inv_freq_interpolation = 1.0 / (self.scale * pos_freqs)
 
         low, high = find_correction_range(self.beta_fast, self.beta_slow, self.dim, self.base, self.original_max_position_embeddings)
+        print(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
+        print(f"low: {low}, high: {high}, dim: {self.dim}")
+        print(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
         inv_freq_mask = (1 - linear_ramp_mask(low, high, self.dim // 2).float().to(device)) * self.extrapolation_factor # Get n-d rotational scaling corrected for extrapolation
         inv_freq = inv_freq_interpolation * (1 - inv_freq_mask) + inv_freq_extrapolation * inv_freq_mask
         self.register_buffer("inv_freq", inv_freq)

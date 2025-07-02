@@ -54,6 +54,13 @@ def main(args):
         correct_answers = 0
         i = 0
         max = len(dataset) if args.limit is None else args.limit
+        
+        if max ==0:
+            print(f"No samples found for model {model} with the given filters.")
+            break
+        else:
+            print(f"Evaluating {model} on {max} samples...")
+
         bar = tqdm(total=max)
         while i < max:
             sample = dataset[i]
