@@ -29,6 +29,8 @@ def load_model(model, args):
         model, trust_remote_code=not args.custom_model)
     
     args.head_dim = config.hidden_size // config.num_attention_heads
+    args.base = config.rope_theta
+    # config.sliding_window = 32768
     if args.max_position_embeddings:
         config.max_position_embeddings = args.max_position_embeddings
     if args.factor:
@@ -77,6 +79,7 @@ def load_model(model, args):
         config=config,
         quantization_config=quantization_config,
         use_flash_attention_2=args.flash_attention,
+        #use_flash_attention_2=False,
     )
     return loaded
 
@@ -105,11 +108,11 @@ def apply_patches(model, args):
     if not args.custom_model and not args.custom_model_together and not args.custom_model_mistral:
         if args.yarn:
             patch_llama_for_yarn_scaled_rotary_embeddings(
-                model, args.head_dim, scale=args.yarn, 
+                model, args.head_dim, scale=args.yarn, base=args.base,
                 max_position_embeddings = int(args.original_max_position_embeddings*args.yarn),original_max_position_embeddings=args.original_max_position_embeddings)
         elif args.radix:
             patch_llama_for_yarn_radix_embeddings(
-                model, args.head_dim, scale=args.radix, 
+                model, args.head_dim, scale=args.radix, base=args.base,
                 max_position_embeddings = int(args.original_max_position_embeddings*args.radix),original_max_position_embeddings=args.original_max_position_embeddings)
 
     if args.adapter:

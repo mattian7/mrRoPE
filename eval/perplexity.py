@@ -11,6 +11,7 @@ from model_loader import *
 from huggingface_hub import login
 
 
+
 def compute_perplexity(
     encodings, model, tokenizer, add_start_token: bool = True, device=None, max_length=None, sliding_window=256, truncate=False, aggressive_memory=False, hide_progress=False,
 ):
@@ -54,13 +55,14 @@ def compute_perplexity(
         for begin_loc in range(0, seq_len, sliding_window):
             # end_loc = max_tokenized_len
             end_loc = min(begin_loc + max_tokenized_len, seq_len)
+            #end_loc = min(begin_loc + sliding_window, seq_len)
             # trg_len = max_tokenized_len - 0 
             trg_len = end_loc - prev_end_loc
-            input_ids = labels[:, begin_loc:end_loc].to(device)
+            input_ids = labels[:, begin_loc:end_loc].to(model.device)
 
             if add_start_token:
                 bos_tokens_tensor = torch.tensor(
-                    [[tokenizer.bos_token_id]] * input_ids.size(dim=0)).to(device)
+                    [[tokenizer.bos_token_id]] * input_ids.size(dim=0)).to(model.device)
                 input_ids = torch.cat(
                     [bos_tokens_tensor, input_ids], dim=1)
 
@@ -72,6 +74,7 @@ def compute_perplexity(
                 neg_log_likelihood = outputs.loss
             
             if aggressive_memory:
+                #print("Aggressive memory mode>>>>>>clearing outputs and input_ids...")
                 outputs = None
                 input_ids = None
                 target_ids = None
@@ -156,6 +159,7 @@ def main(args):
 
         result = []
         for max_length in tokens:
+            print(f"Evaluating {model} with max_length={max_length}...")
             ppl = compute_perplexity(model=loaded, tokenizer=tokenizer, encodings=input_texts,
                                      add_start_token=tokenizer.bos_token is not None, max_length=max_length,
                                      sliding_window=args.sliding_window, truncate=args.truncate,

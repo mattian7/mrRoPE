@@ -42,7 +42,8 @@ class LlamaYaRNRadix(torch.nn.Module):
         self.beta_fast = beta_fast
         self.beta_slow = beta_slow
         
-        self.yarn_radix(device)
+        #self.yarn_radix(device)
+        self.yarn_radix3(device)
         # Build here to make `torch.jit.trace` work.
         self.max_seq_len_cached = max_position_embeddings
         t = torch.arange(self.max_seq_len_cached, device=self.inv_freq.device, dtype=self.inv_freq.dtype)
@@ -85,7 +86,6 @@ class LlamaYaRNRadix(torch.nn.Module):
         
         print(">>>>>>>>>low, high:", low, high)
         half_dim = self.dim // 2
-        inv_freq_interpolation = self.scale ** (1.0 / (high))
         inv_freq_interpolation_l = self.scale ** (1.0 / (high-low))
 
         values = []
@@ -97,21 +97,10 @@ class LlamaYaRNRadix(torch.nn.Module):
                 inv_freq_new.append(inv_freq[i])
                 r.append(0.0)
             elif i > high-1:
-                '''
-                values.append(inv_freq_interpolation ** (i))
-                inv_freq_new.append(inv_freq[i]/values[i])
-                r.append(1.0)
-                '''
-                values.append(inv_freq_interpolation ** (high))
+                values.append(inv_freq_interpolation_l ** (high-low))
                 inv_freq_new.append(inv_freq[i]/values[i])
                 r.append(1.0)
             else:
-                '''
-                ratio = (i-low)/(high-low)
-                values.append((inv_freq_interpolation ** (i) ))
-                inv_freq_new.append((ratio) * inv_freq[i]/values[i] + inv_freq[i] * (1-ratio))
-                r.append(ratio)
-                '''
                 ratio = (i-low)/(high-low)
                 values.append((inv_freq_interpolation_l ** (i-low) ))
                 inv_freq_new.append(inv_freq[i]/values[i])
@@ -119,6 +108,131 @@ class LlamaYaRNRadix(torch.nn.Module):
 
 
         inv_freq_scale = torch.tensor(values, device=device)
+        inv_freq_new= torch.tensor(inv_freq_new, device=device)
+        inv_freq = inv_freq_new
+
+        self.register_buffer("inv_freq", inv_freq)
+        self.mscale = float(get_mscale(self.scale) * self.attn_factor) 
+
+
+    def yarn_radix2(self, device):
+        print(">>>>>>>>use yarn5() method<<<<<<<<<<")
+        pos_freqs = self.base ** (torch.arange(0, self.dim, 2).float().to(device) / self.dim)
+        inv_freq = 1.0 / pos_freqs
+
+        #low, high = find_correction_range(self.beta_fast, self.beta_slow, self.dim, self.base, self.original_max_position_embeddings)
+        low, high = find_correction_range(32, 1, self.dim, self.base, self.original_max_position_embeddings)
+        middle = int((low + high) // 2)
+        
+        print(">>>>>>>>>low, high,  middle:", low, high, middle)
+        half_dim = self.dim // 2
+        inv_freq_interpolation_l = self.scale ** (1.0 / (high-low))
+        part_ratio = 3/8
+        inv_freq_interpolation_l1 = (self.scale ** part_ratio) ** (1 / (middle - low))
+        inv_freq_interpolation_l2 = (self.scale ** (1-part_ratio)) ** ( 1 / (high - middle))
+
+        values = []
+        inv_freq_new = []
+        r = []
+        for i in range(self.dim // 2):
+            if i < low+1:
+                values.append(1.0)
+                inv_freq_new.append(inv_freq[i])
+                r.append(0.0)
+            elif i > high-1:
+                values.append(inv_freq_interpolation_l ** (high-low))
+                inv_freq_new.append(inv_freq[i]/values[i])
+                r.append(1.0)
+            elif i < middle +1:
+                ratio = (i-low)/(middle-low)
+                values.append((inv_freq_interpolation_l1 ** (i-low) ))
+                inv_freq_new.append(inv_freq[i]/values[i])
+                r.append(ratio)
+            else:
+                ratio = (i-middle)/(high-middle)
+                values.append((inv_freq_interpolation_l2 ** (i-middle) ))
+                inv_freq_new.append(inv_freq[i]/values[i])
+                r.append(ratio)
+
+
+        inv_freq_scale = torch.tensor(values, device=device)
+        inv_freq_new= torch.tensor(inv_freq_new, device=device)
+        inv_freq = inv_freq_new
+
+        self.register_buffer("inv_freq", inv_freq)
+        self.mscale = float(get_mscale(self.scale) * self.attn_factor) 
+
+    def yarn_radix3(self, device):
+        print(">>>>>>>>use yarn6() method<<<<<<<<<<")
+        pos_freqs = self.base ** (torch.arange(0, self.dim, 2).float().to(device) / self.dim)
+        inv_freq = 1.0 / pos_freqs
+
+        
+        low, high = find_correction_range(self.beta_fast, self.beta_slow, self.dim, self.base, self.original_max_position_embeddings)
+        
+        
+        print(">>>>>>>>>low, high:", low, high)
+        half_dim = self.dim // 2
+        inv_freq_interpolation_d = self.scale ** (1.0 / ((high-low)*(high-low+1)))
+
+        values = []
+        inv_freq_new = []
+        r = []
+        for i in range(self.dim // 2):
+            if i < low+1:
+                values.append(1.0)
+                inv_freq_new.append(inv_freq[i])
+                r.append(0.0)
+            elif i > high-1:
+                values.append(self.scale)
+                inv_freq_new.append(inv_freq[i]/values[i])
+                r.append(1.0)
+            else:
+                ratio = (i+1-low)*(i-low)/((high-low)*(high-low+1))
+                values.append(inv_freq_interpolation_d ** ((i+1-low)*(i-low)))
+                inv_freq_new.append(inv_freq[i]/values[i])
+                r.append(ratio)
+
+
+        inv_freq_scale = torch.tensor(values, device=device)
+        inv_freq_new= torch.tensor(inv_freq_new, device=device)
+        inv_freq = inv_freq_new
+
+        self.register_buffer("inv_freq", inv_freq)
+        self.mscale = float(get_mscale(self.scale) * self.attn_factor) 
+
+    def yarn_radix4(self, device):
+        print(">>>>>>>>use yarn7() method<<<<<<<<<<")
+        pos_freqs = self.base ** (torch.arange(0, self.dim, 2).float().to(device) / self.dim)
+        inv_freq = 1.0 / pos_freqs
+
+        #low, high = find_correction_range(self.beta_fast, self.beta_slow, self.dim, self.base, self.original_max_position_embeddings)
+        low, high = find_correction_range(32, 1, self.dim, self.base, self.original_max_position_embeddings)
+        
+        
+        print(">>>>>>>>>low, high:", low, high)
+        half_dim = self.dim // 2
+        inv_freq_interpolation_d1 = self.scale ** (1.0 / ((high-low)*(high-low+1)))
+
+        values = []
+        inv_freq_new = []
+        r = []
+        for i in range(self.dim // 2):
+            if i < low+1:
+                values.append(1.0)
+                inv_freq_new.append(inv_freq[i])
+                r.append(0.0)
+            elif i > high-1:
+                values.append(self.scale)
+                inv_freq_new.append(inv_freq[i]/values[i])
+                r.append(1.0)
+            else:
+                values.append(inv_freq_interpolation_d1 ** ((2*high+1-i-low)*(i-low)))
+                inv_freq_new.append(inv_freq[i]/values[i])
+                #r.append(ratio)
+
+
+        #inv_freq_scale = torch.tensor(values, device=device)
         inv_freq_new= torch.tensor(inv_freq_new, device=device)
         inv_freq = inv_freq_new
 

@@ -1,5 +1,6 @@
 import torch
 import math
+import numpy as np
 
 # Inverse dim formula to find dim based on number of rotations
 def find_correction_dim(num_rotations, dim, base=10000, max_position_embeddings=2048):
@@ -20,6 +21,29 @@ def linear_ramp_mask(min, max, dim):
 
     linear_func = (torch.arange(dim, dtype=torch.float32) - min) / (max - min)
     ramp_func = torch.clamp(linear_func, 0, 1)
+    return ramp_func
+
+def linear_ramp_mask2(beta, alpha, base, dim, max_position_embeddings):
+    l1 = max_position_embeddings/(2*math.pi)
+    dims_array = np.arange(dim) / dim
+
+    rd = (l1/(base**i) for i in dims_array)
+    rounds = torch.tensor(list(rd)).float()
+
+    linear_func = (rounds - alpha) / (beta - alpha)
+    ramp_func = torch.clamp(linear_func, 0, 1)
+    for i in range(ramp_func.shape[0]):
+        if ramp_func[i] != 1:
+            low = i
+            break
+
+    for i in range(ramp_func.shape[0]):
+        if ramp_func[i] == 0:
+            high = i
+            break
+
+    print(f"low: {low}, high: {high}, dim: {dim}")
+    print(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
     return ramp_func
 
 def get_mscale(scale=1):
@@ -85,6 +109,16 @@ class LlamaYaRNScaledRotaryEmbedding(torch.nn.Module):
         print(f"low: {low}, high: {high}, dim: {self.dim}")
         print(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
         inv_freq_mask = (1 - linear_ramp_mask(low, high, self.dim // 2).float().to(device)) * self.extrapolation_factor # Get n-d rotational scaling corrected for extrapolation
+        inv_freq = inv_freq_interpolation * (1 - inv_freq_mask) + inv_freq_extrapolation * inv_freq_mask
+        self.register_buffer("inv_freq", inv_freq)
+        self.mscale = float(get_mscale(self.scale) * self.attn_factor) # Get n-d magnitude scaling corrected for interpolation
+
+    def yarn2(self, device):
+        pos_freqs = self.base ** (torch.arange(0, self.dim, 2).float().to(device) / self.dim)
+        inv_freq_extrapolation = 1.0 / pos_freqs
+        inv_freq_interpolation = 1.0 / (self.scale * pos_freqs)
+        print(">>>>>>>>using yarn2")
+        inv_freq_mask = linear_ramp_mask2(self.beta_fast, self.beta_slow, self.base, self.dim // 2, self.original_max_position_embeddings).float().to(device) * self.extrapolation_factor
         inv_freq = inv_freq_interpolation * (1 - inv_freq_mask) + inv_freq_extrapolation * inv_freq_mask
         self.register_buffer("inv_freq", inv_freq)
         self.mscale = float(get_mscale(self.scale) * self.attn_factor) # Get n-d magnitude scaling corrected for interpolation
